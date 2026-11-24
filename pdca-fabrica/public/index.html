@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDCA da Fábrica</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#b4472b">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f5f2;--card:#fff;--tx:#1f2328;--mut:#6b7280;--bd:#e2e0da;--ac:#b4472b;
+--p:#2563eb;--d:#d97706;--c:#7c3aed;--a:#15803d;--x:#6b7280;--bad:#dc2626}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#16171a;--card:#222428;--tx:#ececec;--mut:#9aa0a8;--bd:#34373d;--ac:#e0704f;--p:#60a5fa;--d:#fbbf24;--c:#a78bfa;--a:#4ade80;--x:#9aa0a8;--bad:#f87171}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#16171a;--card:#222428;--tx:#ececec;--mut:#9aa0a8;--bd:#34373d;--ac:#e0704f;--p:#60a5fa;--d:#fbbf24;--c:#a78bfa;--a:#4ade80;--x:#9aa0a8;--bad:#f87171}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.w{max-width:900px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 8px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+button{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:8px 12px;border-radius:8px;cursor:pointer}
+button.pr{background:var(--ac);color:#fff;border-color:var(--ac)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.chip{padding:6px 10px;border-radius:99px;border:1px solid var(--bd);background:var(--card);font-size:14px;cursor:pointer}
+.chip.on{outline:2px solid var(--ac)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:10px}
+.cy{cursor:pointer}.cy h3{margin:0 0 4px;font-size:16px}
+.meta{color:var(--mut);font-size:13px;display:flex;gap:10px;flex-wrap:wrap}
+.b{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600;color:#fff}
+.b.P{background:var(--p)}.b.D{background:var(--d)}.b.C{background:var(--c)}.b.A{background:var(--a)}.b.X{background:var(--x)}
+.late{color:var(--bad);font-weight:600}
+.pend{color:var(--d);font-weight:600}
+label{display:block;font-size:13px;color:var(--mut);margin:8px 0 3px}
+input,select,textarea{width:100%;font:inherit;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx)}
+textarea{min-height:70px;resize:vertical}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+.ph{border-left:6px solid var(--bd)}
+.ph.P{border-left-color:var(--p)}.ph.D{border-left-color:var(--d)}.ph.C{border-left-color:var(--c)}.ph.A{border-left-color:var(--a)}
+.ph.now{box-shadow:0 0 0 2px var(--ac)}
+.ar{display:grid;grid-template-columns:24px 1fr 110px 130px 32px;gap:6px;align-items:center;margin-bottom:6px}
+.ar input[type=checkbox]{width:20px;height:20px}
+.sc{overflow-x:auto}.sc .in{min-width:560px}
+.empty{text-align:center;color:var(--mut);padding:30px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="w" id="app"></div>
+<script>
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(function(){});}
+
+var KEY='pdca-fabrica-v1',QKEY='pdca-fabrica-queue-v1',PH={P:'Planejar',D:'Fazer',C:'Verificar',A:'Agir',X:'Concluído'};
+var S=[],cur=null,flt='all',bk=false,ST='Conectando…',T={},PIN=localStorage.getItem('pdca-pin')||'',tried=false,stop=false,syncing=false;
+
+// Banco de dados local (offline) e fila de sincronização
+function loadLocal(){try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return []}}
+function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function getQ(){try{return JSON.parse(localStorage.getItem(QKEY)||'{}')}catch(e){return {}}}
+function setQ(q){try{localStorage.setItem(QKEY,JSON.stringify(q))}catch(e){}}
+function markQ(id,op){var q=getQ();q[id]=op;setQ(q)}
+function unmarkQ(id){var q=getQ();delete q[id];setQ(q)}
+function qCount(){return Object.keys(getQ()).length}
+
+S=loadLocal();
+sortS();
+
+function clone(o){return JSON.parse(JSON.stringify(o))}
+function rs(){if(!cur&&!bk)render()}
+function sortS(){S.sort(function(a,b){return (b.created||0)-(a.created||0)})}
+
+function api(m,p,b){return fetch('/api/'+p,{method:m,headers:{'Content-Type':'application/json','x-pin':PIN},body:b?JSON.stringify(b):undefined}).then(function(r){
+ if(r.status===401){if(!tried){tried=true;PIN=prompt('Senha de acesso:')||'';localStorage.setItem('pdca-pin',PIN);syncQueue().then(pull)}else{stop=true;localStorage.removeItem('pdca-pin');ST='Senha incorreta: recarregue a página'}throw 401}
+ if(!r.ok)throw r.status;tried=false;return r.json()})}
+
+function err(e){
+ if(e!==401){
+  var p=qCount();
+  ST='Offline (salvo no aparelho'+(p?' · '+p+' pendente'+(p>1?'s':''):'')+')';
+ }
+ rs();
+}
+
+// Sincroniza alterações feitas offline assim que a internet voltar
+function syncQueue(){
+ if(syncing||stop)return Promise.resolve();
+ var q=getQ(),ids=Object.keys(q);
+ if(!ids.length)return Promise.resolve();
+ syncing=true;
+ ST='Sincronizando '+ids.length+' item(ns)…';rs();
+ return ids.reduce(function(chain,id){
+  return chain.then(function(){
+   var op=q[id];
+   if(op==='del'){
+    return api('DELETE','ciclos/'+id).then(function(){unmarkQ(id)});
+   }else{
+    var item=find(id);
+    if(!item){unmarkQ(id);return Promise.resolve();}
+    return api('PUT','ciclos/'+id,item).then(function(){unmarkQ(id)});
+   }
+  });
+ },Promise.resolve()).then(function(){
+  syncing=false;
+  ST='Online: compartilhado';rs();
+ }).catch(function(e){
+  syncing=false;
+  err(e);
+ });
+}
+
+function save(c){
+ c.updated=Date.now();
+ saveLocal();
+ markQ(c.id,'put');
+ clearTimeout(T[c.id]);
+ T[c.id]=setTimeout(function(){
+  delete T[c.id];
+  api('PUT','ciclos/'+c.id,c).then(function(){
+   unmarkQ(c.id);
+   if(!qCount())ST='Online: compartilhado';
+   rs();
+  }).catch(err);
+ },500);
+}
+
+function upsert(c){var i=S.map(function(x){return x.id}).indexOf(c.id);if(i<0)S.unshift(c);else S[i]=c;save(c)}
+
+function rmDoc(id){
+ clearTimeout(T[id]);delete T[id];
+ markQ(id,'del');
+ api('DELETE','ciclos/'+id).then(function(){
+  unmarkQ(id);
+  if(!qCount())ST='Online: compartilhado';
+  rs();
+ }).catch(err);
+}
+
+function pull(){
+ syncQueue().then(function(){
+  if(qCount())return; // Aguarda esvaziar fila antes de sobrescrever
+  return api('GET','ciclos').then(function(n){
+   var q=getQ();
+   // Preserva alterações locais que ainda estão na fila ou sendo digitadas
+   var keep=S.filter(function(x){return q[x.id]||T[x.id]});
+   var keepIds=keep.map(function(x){return x.id});
+   n=n.filter(function(x){return keepIds.indexOf(x.id)<0 && q[x.id]!=='del'});
+   S=n.concat(keep);
+   sortS();
+   saveLocal();
+   ST='Online: compartilhado';
+   if(cur&&!find(cur))cur=null;
+   rs();
+  });
+ }).catch(err);
+}
+
+window.addEventListener('online',function(){if(!stop)pull()});
+window.addEventListener('offline',function(){err('offline')});
+
+pull();
+setInterval(function(){if(!stop&&navigator.onLine)pull()},5000);
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function today(){return new Date().toISOString().slice(0,10)}
+function fmt(d){return d?d.split('-').reverse().join('/'):'sem prazo'}
+function late(c){return c.phase!=='X'&&c.deadline&&c.deadline<today()}
+function find(id){return S.filter(function(c){return c.id===id})[0]}
+function render(){var a=document.getElementById('app');a.innerHTML=cur?edit(find(cur)):list()}
+function list(){
+ var q=getQ();
+ var h='<div class="top"><h1>PDCA da Fábrica</h1><span class="meta">'+ST+'</span><div><button onclick="bk=!bk;render()">Backup</button> <button class="pr" onclick="add()">+ Novo ciclo</button></div></div>';
+ if(bk)h+='<div class="card"><h2>Backup dos dados</h2><p class="meta">Cópia de segurança de todos os ciclos. Copie o texto para guardar, ou cole um backup e clique em Importar (mescla com os ciclos atuais).</p><textarea id="bkt">'+esc(JSON.stringify(S))+'</textarea><div class="row"><button onclick="navigator.clipboard&amp;&amp;navigator.clipboard.writeText(document.getElementById('bkt').value)">Copiar</button><button onclick="imp()">Importar</button></div></div>';
+ var n={all:S.length};Object.keys(PH).forEach(function(k){n[k]=S.filter(function(c){return c.phase===k}).length});
+ h+='<div class="chips"><span class="chip '+(flt==='all'?'on':'')+'" onclick="flt='all';render()">Todos ('+n.all+')</span>';
+ Object.keys(PH).forEach(function(k){h+='<span class="chip '+(flt===k?'on':'')+'" onclick="flt=''+k+'';render()">'+PH[k]+' ('+n[k]+')</span>'});
+ h+='</div>';
+ var L=S.filter(function(c){return flt==='all'||c.phase===flt});
+ if(!L.length)h+='<div class="empty">Nenhum ciclo ainda. Clique em “Novo ciclo” para começar.</div>';
+ L.forEach(function(c){var t=c.actions.length,d=c.actions.filter(function(x){return x.done}).length,isPend=!!q[c.id];
+  h+='<div class="card cy" onclick="cur=''+c.id+'';render();scrollTo(0,0)"><h3>'+esc(c.title||'Sem título')+'</h3><div class="meta"><span class="b '+c.phase+'">'+PH[c.phase]+'</span><span>'+esc(c.area||'sem área')+'</span><span>'+esc(c.owner||'sem responsável')+'</span><span class="'+(late(c)?'late':'')+'">'+(late(c)?'Atrasado · ':'Prazo: ')+fmt(c.deadline)+'</span><span>Ações: '+d+'/'+t+'</span>'+(isPend?'<span class="pend">● Pendente de envio</span>':'')+'</div></div>'});
+ return h}
+function add(){var c={id:'c'+Date.now(),title:'',area:'',owner:'',deadline:'',phase:'P',problem:'',cause:'',goal:'',actions:[],doing:'',result:'',met:'',act:'',actNote:''};c.created=Date.now();S.unshift(c);save(c);cur=c.id;render()}
+function imp(){try{var v=JSON.parse(document.getElementById('bkt').value);if(!Array.isArray(v))throw 0;v.forEach(function(c){if(c&&c.id&&Array.isArray(c.actions))upsert(c)});sortS();bk=false;render()}catch(e){alert('Backup inválido.')}}
+function f(c,k,l,t){return '<label>'+l+'</label>'+(t?'<textarea data-f="'+k+'">'+esc(c[k])+'</textarea>':'<input data-f="'+k+'" value="'+esc(c[k])+'">')}
+function acts(c){var h='<div class="sc"><div class="in">';c.actions.forEach(function(x,i){
+ h+='<div class="ar"><input type="checkbox" data-a="'+i+'" data-k="done" '+(x.done?'checked':'')+'><input data-a="'+i+'" data-k="t" placeholder="O que fazer" value="'+esc(x.t)+'"><input data-a="'+i+'" data-k="who" placeholder="Quem" value="'+esc(x.who)+'"><input type="date" data-a="'+i+'" data-k="when" value="'+esc(x.when)+'"><button onclick="rm('+i+')">×</button></div>'});
+ return h+'</div></div><button onclick="addA()">+ Ação</button>'}
+function addA(){var c=find(cur);c.actions.push({t:'',who:'',when:'',done:false});save(c);render()}
+function rm(i){var c=find(cur);c.actions.splice(i,1);save(c);render()}
+function del(){if(confirm('Excluir este ciclo?')){var id=cur;S=S.filter(function(c){return c.id!==id});saveLocal();rmDoc(id);cur=null;render()}}
+function edit(c){
+ var o=Object.keys(PH).map(function(k){return '<option value="'+k+'"'+(c.phase===k?' selected':'')+'>'+PH[k]+'</option>'}).join('');
+ var m=['','Sim','Parcialmente','Não'].map(function(v){return '<option'+(c.met===v?' selected':'')+'>'+v+'</option>'}).join('');
+ var ac=['','Padronizar (virou rotina)','Novo ciclo PDCA','Abandonar'].map(function(v){return '<option'+(c.act===v?' selected':'')+'>'+v+'</option>'}).join('');
+ return '<div class="top"><button onclick="cur=null;render()">← Voltar</button><button onclick="del()">Excluir</button></div>'
+ +'<div class="card"><h2>Ciclo</h2>'+f(c,'title','Título (ex.: reduzir retrabalho na embalagem)')+'<div class="g"><div>'+f(c,'area','Área / setor')+'</div><div>'+f(c,'owner','Responsável')+'</div><div><label>Prazo</label><input type="date" data-f="deadline" value="'+esc(c.deadline)+'"></div><div><label>Fase atual</label><select data-f="phase">'+o+'</select></div></div></div>'
+ +'<div class="card ph P '+(c.phase==='P'?'now':'')+'"><h2><span class="b P">P</span> Planejar</h2>'+f(c,'problem','Problema (o que está acontecendo, com dados)',1)+f(c,'cause','Causa raiz (use os 5 porquês)',1)+f(c,'goal','Meta (indicador, valor atual → valor desejado)')+'<label>Plano de ação</label>'+acts(c)+'</div>'
+ +'<div class="card ph D '+(c.phase==='D'?'now':'')+'"><h2><span class="b D">D</span> Fazer</h2>'+f(c,'doing','O que foi executado, datas e ocorrências',1)+'</div>'
+ +'<div class="card ph C '+(c.phase==='C'?'now':'')+'"><h2><span class="b C">C</span> Verificar</h2>'+f(c,'result','Resultado medido (comparar com a meta)',1)+'<label>Meta atingida?</label><select data-f="met">'+m+'</select></div>'
+ +'<div class="card ph A '+(c.phase==='A'?'now':'')+'"><h2><span class="b A">A</span> Agir</h2><label>Decisão</label><select data-f="act">'+ac+'</select>'+f(c,'actNote','Como padronizar / o que muda no próximo ciclo',1)+'</div>'}
+document.addEventListener('input',function(e){var t=e.target,c=cur&&find(cur);if(!c)return;
+ if(t.dataset.f){c[t.dataset.f]=t.value;save(c)}
+ else if(t.dataset.a!==undefined){var x=c.actions[+t.dataset.a];x[t.dataset.k]=t.type==='checkbox'?t.checked:t.value;save(c)}});
+render();
+</script>
+</body>
+</html>
